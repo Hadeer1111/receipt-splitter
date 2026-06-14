@@ -7,6 +7,9 @@ import type { ParsedReceipt } from "@/lib/types";
 import { Card } from "@/components/ui";
 import { formatDollarsInput } from "@/lib/utils";
 
+const GALLERY_INPUT_ID = "receipt-gallery-file";
+const CAMERA_INPUT_ID = "receipt-camera-file";
+
 function isMobileDevice() {
   if (typeof window === "undefined") return false;
   return (
@@ -23,60 +26,53 @@ function isStandalonePwa() {
   );
 }
 
-/**
- * iOS Safari often ignores React's synthetic onChange for file inputs (especially
- * Photo Library). Native addEventListener is the reliable fix per WebKit bugs.
- */
-function useNativeFileInput(onFile: (file: File) => void | Promise<void>, enabled = true) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const onFileRef = useRef(onFile);
-  const busyRef = useRef(false);
-
-  useEffect(() => {
-    onFileRef.current = onFile;
-  }, [onFile]);
-
-  useEffect(() => {
-    const input = inputRef.current;
-    if (!input || !enabled) return;
-
-    const handleSelection = (event: Event) => {
-      const target = event.target as HTMLInputElement;
-      const file = target.files?.[0];
-      if (!file || busyRef.current) return;
-
-      busyRef.current = true;
-      const selected = file;
-
-      queueMicrotask(() => {
-        void Promise.resolve(onFileRef.current(selected))
-          .catch(() => {})
-          .finally(() => {
-            target.value = "";
-            busyRef.current = false;
-          });
-      });
-    };
-
-    input.addEventListener("change", handleSelection);
-    input.addEventListener("input", handleSelection);
-
-    return () => {
-      input.removeEventListener("change", handleSelection);
-      input.removeEventListener("input", handleSelection);
-    };
-  }, [enabled]);
-
-  return inputRef;
-}
-
 interface ReceiptScannerProps {
   onParsed: (result: ParsedReceipt) => void;
 }
 
 type ScanStatus = "idle" | "converting" | "scanning" | "done" | "error";
 
+function FileUploadZone({
+  inputId,
+  label,
+  capture,
+  variant = "primary",
+}: {
+  inputId: string;
+  label: string;
+  capture?: "environment";
+  variant?: "primary" | "secondary";
+}) {
+  const barClass =
+    variant === "primary"
+      ? "bg-primary text-white"
+      : "border border-border bg-card text-foreground";
+
+  return (
+    <div className="relative w-full">
+      <div
+        className={`flex h-14 w-full items-center justify-center rounded-xl px-4 text-base font-semibold ${barClass}`}
+        aria-hidden="true"
+      >
+        {label}
+      </div>
+      <input
+        id={inputId}
+        type="file"
+        name={inputId}
+        accept="image/*"
+        capture={capture}
+        className="receipt-file-input"
+      />
+    </div>
+  );
+}
+
 export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const onParsedRef = useRef(onParsed);
+  const busyRef = useRef(false);
+
   const [mobile, setMobile] = useState(false);
   const [standalonePwa, setStandalonePwa] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
@@ -85,138 +81,126 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    onParsedRef.current = onParsed;
+  }, [onParsed]);
+
+  useEffect(() => {
     setMobile(isMobileDevice());
     setStandalonePwa(isStandalonePwa());
   }, []);
 
-  const processFile = useCallback(
-    async (file: File) => {
-      setError("");
-      setSelectedName(file.name || "Selected photo");
-      setStatus("converting");
+  const processFile = useCallback(async (file: File) => {
+    setError("");
+    setSelectedName(file.name || "Selected photo");
+    setStatus("converting");
 
-      try {
-        const normalized = await normalizeReceiptImage(file);
-        setPreview(URL.createObjectURL(normalized));
-        setStatus("scanning");
+    try {
+      const normalized = await normalizeReceiptImage(file);
+      setPreview(URL.createObjectURL(normalized));
+      setStatus("scanning");
 
-        const result = await parseReceipt(normalized);
-        onParsed(result);
-        setStatus("done");
-      } catch (err) {
-        setStatus("error");
-        setError(err instanceof ApiError ? err.message : "Failed to scan receipt");
-      }
-    },
-    [onParsed],
-  );
+      const result = await parseReceipt(normalized);
+      onParsedRef.current(result);
+      setStatus("done");
+    } catch (err) {
+      setStatus("error");
+      setError(err instanceof ApiError ? err.message : "Failed to scan receipt");
+    }
+  }, []);
 
-  const busy = status === "converting" || status === "scanning";
-  const galleryRef = useNativeFileInput(processFile, !busy);
-  const cameraRef = useNativeFileInput(processFile, !busy);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+
+    const attach = (inputId: string) => {
+      const input = root.querySelector<HTMLInputElement>(`#${inputId}`);
+      if (!input) return () => {};
+
+      const onChange = (event: Event) => {
+        const target = event.target as HTMLInputElement;
+        const file = target.files?.[0];
+        if (!file || busyRef.current) return;
+
+        busyRef.current = true;
+        setSelectedName(file.name || "Selected photo");
+        setError("");
+
+        void processFile(file).finally(() => {
+          busyRef.current = false;
+          window.setTimeout(() => {
+            target.value = "";
+          }, 300);
+        });
+      };
+
+      input.addEventListener("change", onChange);
+      return () => input.removeEventListener("change", onChange);
+    };
+
+    const cleanups = [attach(GALLERY_INPUT_ID), attach(CAMERA_INPUT_ID)];
+    return () => cleanups.forEach((cleanup) => cleanup());
+  }, [processFile]);
 
   return (
     <Card className="space-y-3">
-      <div>
+      <div ref={rootRef}>
         <h3 className="font-semibold">Scan receipt</h3>
-        <p className="text-sm text-muted">
+        <p className="mt-1 text-sm text-muted">
           Take a photo or upload an image to auto-fill items, tax, and tip.
         </p>
-      </div>
 
-      {standalonePwa && (
-        <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
-          iOS home-screen apps can break photo uploads. If nothing happens, open this page in
-          Safari instead: tap Share → Open in Safari.
-        </p>
-      )}
-
-      {preview && (
-        <div className="overflow-hidden rounded-xl border border-border">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={preview} alt="Receipt preview" className="max-h-48 w-full object-contain bg-black/5" />
-        </div>
-      )}
-
-      {selectedName && (
-        <p className="rounded-lg bg-accent px-3 py-2 text-sm font-medium">
-          Selected: {selectedName}
-        </p>
-      )}
-
-      {status === "converting" && (
-        <p className="text-sm text-primary">Converting photo for upload…</p>
-      )}
-      {status === "scanning" && (
-        <p className="text-sm text-muted">Reading receipt — this usually takes a few seconds.</p>
-      )}
-      {status === "done" && (
-        <p className="text-sm text-green-600">Receipt scanned — items filled in below.</p>
-      )}
-
-      <div className="space-y-3">
-        {mobile ? (
-          <>
-            <label className="block cursor-pointer rounded-xl border-2 border-primary bg-background p-4">
-              <span className="mb-3 block text-center text-sm font-semibold text-primary">
-                1. Photo library
-              </span>
-              <input
-                ref={galleryRef}
-                type="file"
-                name="receipt-gallery"
-                accept="image/*"
-                className="block w-full cursor-pointer"
-                style={{ fontSize: 16, minHeight: 48, width: "100%" }}
-              />
-              <span className="mt-2 block text-center text-xs text-muted">
-                Tap above, then choose Photo Library
-              </span>
-            </label>
-
-            <label className="block cursor-pointer rounded-xl border border-border bg-background p-4">
-              <span className="mb-3 block text-center text-sm font-semibold">
-                2. Take new photo
-              </span>
-              <input
-                ref={cameraRef}
-                type="file"
-                name="receipt-camera"
-                accept="image/*"
-                capture="environment"
-                className="block w-full cursor-pointer"
-                style={{ fontSize: 16, minHeight: 48, width: "100%" }}
-              />
-              <span className="mt-2 block text-center text-xs text-muted">
-                Tap above, then choose Take Photo
-              </span>
-            </label>
-          </>
-        ) : (
-          <label className="block cursor-pointer rounded-xl border-2 border-primary bg-background p-4">
-            <span className="mb-3 block text-center text-sm font-semibold text-primary">
-              Upload receipt image
-            </span>
-            <input
-              ref={galleryRef}
-              type="file"
-              name="receipt-upload"
-              accept="image/*"
-              className="block w-full cursor-pointer"
-              style={{ fontSize: 16, minHeight: 48, width: "100%" }}
-            />
-          </label>
-        )}
-
-        {mobile && (
-          <p className="text-xs leading-relaxed text-muted">
-            Use Safari or Chrome directly — not Instagram/WhatsApp. If the picker never opens,
-            check Settings → Safari → Photos → Allow.
+        {standalonePwa && (
+          <p className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+            Open this page in Safari (not the home-screen app). Tap Share → Open in Safari.
           </p>
         )}
-      </div>
 
-      {error && <p className="text-sm text-red-500">{error}</p>}
+        {preview && (
+          <div className="mt-3 overflow-hidden rounded-xl border border-border">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={preview} alt="Receipt preview" className="max-h-48 w-full object-contain bg-black/5" />
+          </div>
+        )}
+
+        {selectedName && (
+          <p className="mt-3 rounded-lg bg-accent px-3 py-2 text-sm font-medium">
+            Selected: {selectedName}
+          </p>
+        )}
+
+        {status === "converting" && (
+          <p className="mt-2 text-sm text-primary">Converting photo for upload…</p>
+        )}
+        {status === "scanning" && (
+          <p className="mt-2 text-sm text-muted">Reading receipt — this usually takes a few seconds.</p>
+        )}
+        {status === "done" && (
+          <p className="mt-2 text-sm text-green-600">Receipt scanned — items filled in below.</p>
+        )}
+
+        <div className="mt-4 space-y-3">
+          <FileUploadZone
+            inputId={GALLERY_INPUT_ID}
+            label={mobile ? "Tap to choose from Photo Library" : "Tap to upload receipt image"}
+          />
+
+          {mobile && (
+            <FileUploadZone
+              inputId={CAMERA_INPUT_ID}
+              label="Tap to take a new photo"
+              capture="environment"
+              variant="secondary"
+            />
+          )}
+
+          <p className="text-xs leading-relaxed text-muted">
+            Tap directly on the colored bar above — not the small “Choose File” text. Use Safari or
+            Chrome (not Instagram/WhatsApp). Allow Photos access if iOS asks.
+          </p>
+        </div>
+
+        {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
+      </div>
     </Card>
   );
 }
