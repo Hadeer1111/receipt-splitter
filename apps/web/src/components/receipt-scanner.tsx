@@ -6,20 +6,6 @@ import type { ParsedReceipt } from "@/lib/types";
 import { Button, Card } from "@/components/ui";
 import { cn, formatDollarsInput } from "@/lib/utils";
 
-const IMAGE_ACCEPT = "image/jpeg,image/png,image/heic,image/webp,image/*";
-
-const buttonBaseClass =
-  "relative flex min-h-[44px] flex-1 cursor-pointer items-center justify-center rounded-xl px-4 py-3 text-sm font-semibold transition";
-const buttonPrimaryClass = cn(buttonBaseClass, "bg-primary text-white hover:bg-primary-hover");
-const buttonSecondaryClass = cn(
-  buttonBaseClass,
-  "bg-card border border-border text-foreground hover:bg-accent",
-);
-
-interface ReceiptScannerProps {
-  onParsed: (result: ParsedReceipt) => void;
-}
-
 function isMobileDevice() {
   if (typeof window === "undefined") return false;
   return (
@@ -28,45 +14,21 @@ function isMobileDevice() {
   );
 }
 
-function FilePickerLabel({
-  accept = IMAGE_ACCEPT,
-  capture,
-  disabled,
-  className,
-  children,
-  onSelect,
-}: {
-  accept?: string;
-  capture?: "environment" | "user";
-  disabled?: boolean;
-  className?: string;
-  children: React.ReactNode;
-  onSelect: (file: File) => void;
-}) {
-  return (
-    <label
-      className={cn(className, disabled && "pointer-events-none opacity-50")}
-    >
-      <input
-        type="file"
-        accept={accept}
-        capture={capture}
-        className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
-        style={{ fontSize: 16 }}
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          e.target.value = "";
-          if (file) onSelect(file);
-        }}
-      />
-      <span className="pointer-events-none select-none">{children}</span>
-    </label>
-  );
+const galleryInputClassName = cn(
+  "block w-full cursor-pointer text-sm text-muted",
+  "file:mr-0 file:w-full file:cursor-pointer file:rounded-xl file:border-0",
+  "file:bg-primary file:px-4 file:py-3 file:text-sm file:font-semibold file:text-white",
+  "file:transition file:hover:bg-primary-hover",
+);
+
+interface ReceiptScannerProps {
+  onParsed: (result: ParsedReceipt) => void;
 }
 
 export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const cameraFallbackRef = useRef<HTMLInputElement>(null);
 
   const [mobile, setMobile] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
@@ -112,6 +74,12 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
     }
   }
 
+  function handleGalleryChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] ?? null;
+    e.target.value = "";
+    void handleFile(file);
+  }
+
   const pickerDisabled = loading || openingCamera || showCamera;
   const supportsCameraApi = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
 
@@ -138,6 +106,11 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
     } finally {
       setOpeningCamera(false);
     }
+  }
+
+  function openCameraFallback() {
+    setError("");
+    cameraFallbackRef.current?.click();
   }
 
   function cancelCamera() {
@@ -177,6 +150,17 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
         </p>
       </div>
 
+      <input
+        ref={cameraFallbackRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
+        onChange={handleGalleryChange}
+      />
+
       {showCamera && (
         <div className="space-y-3">
           <div className="overflow-hidden rounded-xl border border-border bg-black">
@@ -206,51 +190,60 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
       )}
 
       {!showCamera && (
-        <div className="flex gap-2">
-          {mobile ? (
-            <>
+        <div className="space-y-3">
+          {mobile && (
+            <div className="flex gap-2">
               {supportsCameraApi ? (
                 <Button
                   type="button"
-                  className="min-h-[44px] flex-1"
+                  className="min-h-[44px] w-full"
                   onClick={() => void openCamera()}
                   disabled={pickerDisabled}
                 >
                   {openingCamera ? "Requesting access..." : "Take photo"}
                 </Button>
               ) : (
-                <FilePickerLabel
-                  capture="environment"
+                <Button
+                  type="button"
+                  className="min-h-[44px] w-full"
+                  onClick={openCameraFallback}
                   disabled={pickerDisabled}
-                  className={buttonSecondaryClass}
-                  onSelect={(file) => void handleFile(file)}
                 >
                   Take photo
-                </FilePickerLabel>
+                </Button>
               )}
-              <FilePickerLabel
-                disabled={pickerDisabled}
-                className={buttonSecondaryClass}
-                onSelect={(file) => void handleFile(file)}
-              >
-                Choose photo
-              </FilePickerLabel>
-            </>
-          ) : (
-            <FilePickerLabel
-              disabled={pickerDisabled}
-              className={buttonPrimaryClass}
-              onSelect={(file) => void handleFile(file)}
-            >
-              {loading ? "Reading receipt..." : preview ? "Scan another" : "Upload receipt image"}
-            </FilePickerLabel>
+            </div>
           )}
+
+          <div
+            className={cn(
+              "rounded-xl border border-border bg-background p-3",
+              pickerDisabled && "pointer-events-none opacity-50",
+            )}
+          >
+            {mobile && (
+              <p className="mb-2 text-center text-sm font-semibold">Choose photo</p>
+            )}
+            <input
+              type="file"
+              accept="image/*"
+              disabled={pickerDisabled}
+              className={galleryInputClassName}
+              style={{ fontSize: 16 }}
+              onChange={handleGalleryChange}
+            />
+            {!mobile && (
+              <p className="mt-2 text-center text-xs text-muted">
+                {loading ? "Reading receipt..." : preview ? "Pick another image to scan again" : "Select a receipt image from your device"}
+              </p>
+            )}
+          </div>
         </div>
       )}
 
       {mobile && !showCamera && (
         <p className="text-xs text-muted">
-          Your browser may ask for camera or photo library access.
+          Tap the button above to pick from your photo library. Your browser may ask for access.
         </p>
       )}
       {loading && (
