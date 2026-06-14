@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { parseReceipt, ApiError } from "@/lib/api";
 import type { ParsedReceipt } from "@/lib/types";
 import { Button, Card } from "@/components/ui";
@@ -10,15 +10,50 @@ interface ReceiptScannerProps {
   onParsed: (result: ParsedReceipt) => void;
 }
 
+function isMobileDevice() {
+  if (typeof window === "undefined") return false;
+  return (
+    /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+    (navigator.maxTouchPoints > 1 && window.matchMedia("(max-width: 768px)").matches)
+  );
+}
+
 export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  const [mobile, setMobile] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [permissionNote, setPermissionNote] = useState("");
+  const [showCamera, setShowCamera] = useState(false);
+  const [openingCamera, setOpeningCamera] = useState(false);
+
+  const stopCameraStream = useCallback(() => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    setMobile(isMobileDevice());
+    return () => stopCameraStream();
+  }, [stopCameraStream]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    const stream = streamRef.current;
+    if (!showCamera || !video || !stream) return;
+
+    video.srcObject = stream;
+    void video.play().catch(() => {});
+  }, [showCamera]);
 
   async function handleFile(file: File | null) {
     if (!file) return;
     setError("");
+    setPermissionNote("");
 
     const objectUrl = URL.createObjectURL(file);
     setPreview(objectUrl);
@@ -34,6 +69,82 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
     }
   }
 
+  async function openCamera() {
+    setError("");
+    setPermissionNote("Allow camera access when your browser asks — we only use it to scan your receipt.");
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      galleryInputRef.current?.setAttribute("capture", "environment");
+      galleryInputRef.current?.click();
+      galleryInputRef.current?.removeAttribute("capture");
+      setPermissionNote("");
+      return;
+    }
+
+    setOpeningCamera(true);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      });
+      streamRef.current = stream;
+      setShowCamera(true);
+      setPermissionNote("");
+    } catch (err) {
+      const denied =
+        err instanceof DOMException &&
+        (err.name === "NotAllowedError" || err.name === "PermissionDeniedError");
+      setCameraError(
+        denied
+          ? "Camera access was blocked. Enable it in your browser or device settings, then try again."
+          : "Could not open the camera. Try choosing a photo from your library instead.",
+      );
+      setPermissionNote("");
+    } finally {
+      setOpeningCamera(false);
+    }
+  }
+
+  function setCameraError(message: string) {
+    setError(message);
+  }
+
+  function openGallery() {
+    setError("");
+    setPermissionNote("Allow photo library access when prompted to pick a receipt image.");
+    galleryInputRef.current?.click();
+  }
+
+  function cancelCamera() {
+    stopCameraStream();
+    setShowCamera(false);
+    setPermissionNote("");
+  }
+
+  async function capturePhoto() {
+    const video = videoRef.current;
+    if (!video || video.videoWidth === 0) return;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.drawImage(video, 0, 0);
+    stopCameraStream();
+    setShowCamera(false);
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", 0.92),
+    );
+    if (!blob) return;
+
+    const file = new File([blob], `receipt-${Date.now()}.jpg`, { type: "image/jpeg" });
+    await handleFile(file);
+  }
+
   return (
     <Card className="space-y-3">
       <div>
@@ -44,32 +155,83 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
       </div>
 
       <input
-        ref={inputRef}
+        ref={galleryInputRef}
         type="file"
         accept="image/*"
-        capture="environment"
         className="hidden"
-        onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
+        onChange={(e) => {
+          void handleFile(e.target.files?.[0] ?? null);
+          e.target.value = "";
+          setPermissionNote("");
+        }}
       />
 
-      {preview && (
+      {showCamera && (
+        <div className="space-y-3">
+          <div className="overflow-hidden rounded-xl border border-border bg-black">
+            <video
+              ref={videoRef}
+              playsInline
+              muted
+              className="aspect-[3/4] w-full object-cover"
+            />
+          </div>
+          <div className="flex gap-2">
+            <Button type="button" variant="secondary" className="flex-1" onClick={cancelCamera}>
+              Cancel
+            </Button>
+            <Button type="button" className="flex-1" onClick={() => void capturePhoto()} disabled={loading}>
+              Capture
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {preview && !showCamera && (
         <div className="overflow-hidden rounded-xl border border-border">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={preview} alt="Receipt preview" className="max-h-48 w-full object-contain bg-black/5" />
         </div>
       )}
 
-      <div className="flex gap-2">
-        <Button
-          type="button"
-          className="flex-1"
-          onClick={() => inputRef.current?.click()}
-          disabled={loading}
-        >
-          {loading ? "Reading receipt..." : preview ? "Scan another" : "Take photo / upload"}
-        </Button>
-      </div>
+      {!showCamera && (
+        <div className="flex gap-2">
+          {mobile ? (
+            <>
+              <Button
+                type="button"
+                className="flex-1"
+                onClick={() => void openCamera()}
+                disabled={loading || openingCamera}
+              >
+                {openingCamera ? "Requesting access..." : "Take photo"}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                className="flex-1"
+                onClick={openGallery}
+                disabled={loading || openingCamera}
+              >
+                Choose photo
+              </Button>
+            </>
+          ) : (
+            <Button
+              type="button"
+              className="flex-1"
+              onClick={openGallery}
+              disabled={loading}
+            >
+              {loading ? "Reading receipt..." : preview ? "Scan another" : "Upload receipt image"}
+            </Button>
+          )}
+        </div>
+      )}
 
+      {permissionNote && (
+        <p className="text-sm text-muted">{permissionNote}</p>
+      )}
       {loading && (
         <p className="text-sm text-muted">Extracting line items — this usually takes a few seconds.</p>
       )}
