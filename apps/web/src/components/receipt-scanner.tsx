@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { parseReceipt, ApiError } from "@/lib/api";
+import { normalizeReceiptImage } from "@/lib/normalize-image";
 import type { ParsedReceipt } from "@/lib/types";
 import { Button, Card } from "@/components/ui";
 import { cn, formatDollarsInput } from "@/lib/utils";
@@ -18,54 +19,17 @@ interface ReceiptScannerProps {
   onParsed: (result: ParsedReceipt) => void;
 }
 
-function GalleryPicker({
-  disabled,
-  onSelect,
-  label,
-  hint,
-  capture,
-}: {
-  disabled?: boolean;
-  onSelect: (file: File) => void;
-  label: string;
-  hint?: string;
-  capture?: "environment" | "user";
-}) {
-  return (
-    <div
-      className={cn(
-        "relative min-h-[120px] rounded-xl border-2 border-dashed border-primary/50 bg-background",
-        disabled && "pointer-events-none opacity-50",
-      )}
-    >
-      <input
-        type="file"
-        accept="image/*"
-        capture={capture}
-        className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-[0.01]"
-        style={{ fontSize: 16, touchAction: "manipulation" }}
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          e.target.value = "";
-          if (file) onSelect(file);
-        }}
-      />
-      <div className="pointer-events-none flex min-h-[120px] flex-col items-center justify-center px-4 py-6 text-center">
-        <p className="font-semibold text-primary">{label}</p>
-        {hint && <p className="mt-1 text-xs text-muted">{hint}</p>}
-      </div>
-    </div>
-  );
-}
+type ScanStatus = "idle" | "converting" | "scanning" | "done" | "error";
 
 export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
+  const galleryInputId = useId();
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
   const [mobile, setMobile] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [selectedName, setSelectedName] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState<ScanStatus>("idle");
   const [error, setError] = useState("");
   const [showCamera, setShowCamera] = useState(false);
   const [openingCamera, setOpeningCamera] = useState(false);
@@ -89,26 +53,31 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
     void video.play().catch(() => {});
   }, [showCamera]);
 
-  async function handleFile(file: File | null) {
+  async function handleGalleryChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
     if (!file) return;
+
     setError("");
     setSelectedName(file.name || "Selected photo");
-
-    const objectUrl = URL.createObjectURL(file);
-    setPreview(objectUrl);
-    setLoading(true);
+    setStatus("converting");
 
     try {
-      const result = await parseReceipt(file);
+      const normalized = await normalizeReceiptImage(file);
+      setPreview(URL.createObjectURL(normalized));
+      setStatus("scanning");
+
+      const result = await parseReceipt(normalized);
       onParsed(result);
+      setStatus("done");
     } catch (err) {
+      setStatus("error");
       setError(err instanceof ApiError ? err.message : "Failed to scan receipt");
     } finally {
-      setLoading(false);
+      e.target.value = "";
     }
   }
 
-  const pickerDisabled = loading || openingCamera || showCamera;
+  const pickerDisabled = status === "converting" || status === "scanning" || openingCamera || showCamera;
   const supportsCameraApi = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
 
   async function openCamera() {
@@ -161,7 +130,19 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
     if (!blob) return;
 
     const file = new File([blob], `receipt-${Date.now()}.jpg`, { type: "image/jpeg" });
-    await handleFile(file);
+    setSelectedName(file.name);
+    setStatus("scanning");
+    setPreview(URL.createObjectURL(file));
+    setError("");
+
+    try {
+      const result = await parseReceipt(file);
+      onParsed(result);
+      setStatus("done");
+    } catch (err) {
+      setStatus("error");
+      setError(err instanceof ApiError ? err.message : "Failed to scan receipt");
+    }
   }
 
   return (
@@ -187,7 +168,12 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
             <Button type="button" variant="secondary" className="flex-1" onClick={cancelCamera}>
               Cancel
             </Button>
-            <Button type="button" className="flex-1" onClick={() => void capturePhoto()} disabled={loading}>
+            <Button
+              type="button"
+              className="flex-1"
+              onClick={() => void capturePhoto()}
+              disabled={status === "scanning"}
+            >
               Capture
             </Button>
           </div>
@@ -202,7 +188,19 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
       )}
 
       {selectedName && !showCamera && (
-        <p className="text-sm text-muted">Selected: {selectedName}</p>
+        <p className="rounded-lg bg-accent px-3 py-2 text-sm font-medium">
+          Selected: {selectedName}
+        </p>
+      )}
+
+      {status === "converting" && (
+        <p className="text-sm text-primary">Converting photo for upload…</p>
+      )}
+      {status === "scanning" && (
+        <p className="text-sm text-muted">Reading receipt — this usually takes a few seconds.</p>
+      )}
+      {status === "done" && (
+        <p className="text-sm text-green-600">Receipt scanned — items filled in below.</p>
       )}
 
       {!showCamera && (
@@ -210,7 +208,7 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
           {mobile && supportsCameraApi && (
             <Button
               type="button"
-              className="min-h-[44px] w-full"
+              className="min-h-[48px] w-full"
               onClick={() => void openCamera()}
               disabled={pickerDisabled}
             >
@@ -218,32 +216,34 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
             </Button>
           )}
 
-          <GalleryPicker
-            disabled={pickerDisabled}
-            label={mobile ? "Tap to choose photo" : "Tap to upload receipt image"}
-            hint={
-              mobile
-                ? "Opens your photo library — allow access if asked"
-                : "Select a JPEG, PNG, or HEIC image"
-            }
-            onSelect={(file) => void handleFile(file)}
-          />
+          <div className="rounded-xl border-2 border-primary/40 bg-background p-4">
+            <label
+              htmlFor={galleryInputId}
+              className="mb-3 block cursor-pointer text-center text-sm font-semibold text-primary"
+            >
+              {mobile ? "Choose photo from library" : "Upload receipt image"}
+            </label>
 
-          {mobile && !supportsCameraApi && (
-            <GalleryPicker
+            <input
+              id={galleryInputId}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/*"
               disabled={pickerDisabled}
-              capture="environment"
-              label="Tap to take photo"
-              hint="Opens your camera — allow access if asked"
-              onSelect={(file) => void handleFile(file)}
+              onChange={(e) => void handleGalleryChange(e)}
+              className="block w-full min-w-0 cursor-pointer text-base"
+              style={{ fontSize: 16, minHeight: 48 }}
             />
-          )}
+
+            {mobile && (
+              <p className="mt-3 text-center text-xs leading-relaxed text-muted">
+                Tap the file button above (may say “Browse” or “Choose File”). Open this page in
+                Safari or Chrome — in-app browsers often block photo uploads.
+              </p>
+            )}
+          </div>
         </div>
       )}
 
-      {loading && (
-        <p className="text-sm text-muted">Extracting line items — this usually takes a few seconds.</p>
-      )}
       {error && <p className="text-sm text-red-500">{error}</p>}
     </Card>
   );

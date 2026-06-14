@@ -23,6 +23,9 @@ importers:
       '@receipt-splitter/core':
         specifier: workspace:*
         version: link:../../packages/core
+      heic2any:
+        specifier: ^0.0.4
+        version: 0.0.4
       next:
         specifier: ^15.3.3
         version: 15.5.19(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -835,6 +838,9 @@ packages:
 
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
+
+  heic2any@0.0.4:
+    resolution: {integrity: sha512-3lLnZiDELfabVH87htnRolZ2iehX9zwpRyGNz22GKXIu0fznlblf0/ftppXKNqS26dqFSeqfIBhAmAj/uSp0cA==}
 
   jiti@2.7.0:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
@@ -1715,6 +1721,8 @@ snapshots:
     optional: true
 
   graceful-fs@4.2.11: {}
+
+  heic2any@0.0.4: {}
 
   jiti@2.7.0: {}
 
