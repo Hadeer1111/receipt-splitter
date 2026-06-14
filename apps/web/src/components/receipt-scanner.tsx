@@ -6,11 +6,15 @@ import type { ParsedReceipt } from "@/lib/types";
 import { Button, Card } from "@/components/ui";
 import { cn, formatDollarsInput } from "@/lib/utils";
 
-const GALLERY_INPUT_ID = "receipt-gallery-input";
-const CAMERA_CAPTURE_INPUT_ID = "receipt-camera-capture-input";
+const IMAGE_ACCEPT = "image/jpeg,image/png,image/heic,image/webp,image/*";
 
-const buttonSecondaryClass =
-  "inline-flex items-center justify-center rounded-xl px-4 py-3 text-sm font-semibold transition bg-card border border-border text-foreground hover:bg-accent";
+const buttonBaseClass =
+  "relative flex min-h-[44px] flex-1 cursor-pointer items-center justify-center rounded-xl px-4 py-3 text-sm font-semibold transition";
+const buttonPrimaryClass = cn(buttonBaseClass, "bg-primary text-white hover:bg-primary-hover");
+const buttonSecondaryClass = cn(
+  buttonBaseClass,
+  "bg-card border border-border text-foreground hover:bg-accent",
+);
 
 interface ReceiptScannerProps {
   onParsed: (result: ParsedReceipt) => void;
@@ -24,6 +28,42 @@ function isMobileDevice() {
   );
 }
 
+function FilePickerLabel({
+  accept = IMAGE_ACCEPT,
+  capture,
+  disabled,
+  className,
+  children,
+  onSelect,
+}: {
+  accept?: string;
+  capture?: "environment" | "user";
+  disabled?: boolean;
+  className?: string;
+  children: React.ReactNode;
+  onSelect: (file: File) => void;
+}) {
+  return (
+    <label
+      className={cn(className, disabled && "pointer-events-none opacity-50")}
+    >
+      <input
+        type="file"
+        accept={accept}
+        capture={capture}
+        className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+        style={{ fontSize: 16 }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) onSelect(file);
+        }}
+      />
+      <span className="pointer-events-none select-none">{children}</span>
+    </label>
+  );
+}
+
 export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -32,7 +72,6 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
   const [preview, setPreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [permissionNote, setPermissionNote] = useState("");
   const [showCamera, setShowCamera] = useState(false);
   const [openingCamera, setOpeningCamera] = useState(false);
 
@@ -58,7 +97,6 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
   async function handleFile(file: File | null) {
     if (!file) return;
     setError("");
-    setPermissionNote("");
 
     const objectUrl = URL.createObjectURL(file);
     setPreview(objectUrl);
@@ -74,25 +112,11 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
     }
   }
 
-  function handleGalleryChange(e: React.ChangeEvent<HTMLInputElement>) {
-    void handleFile(e.target.files?.[0] ?? null);
-    e.target.value = "";
-    setPermissionNote("");
-  }
-
-  function handleCameraCaptureChange(e: React.ChangeEvent<HTMLInputElement>) {
-    void handleFile(e.target.files?.[0] ?? null);
-    e.target.value = "";
-    setPermissionNote("");
-  }
-
   const pickerDisabled = loading || openingCamera || showCamera;
   const supportsCameraApi = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
 
   async function openCamera() {
     setError("");
-    setPermissionNote("Allow camera access when your browser asks — we only use it to scan your receipt.");
-
     setOpeningCamera(true);
 
     try {
@@ -102,30 +126,23 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
       });
       streamRef.current = stream;
       setShowCamera(true);
-      setPermissionNote("");
     } catch (err) {
       const denied =
         err instanceof DOMException &&
         (err.name === "NotAllowedError" || err.name === "PermissionDeniedError");
-      setCameraError(
+      setError(
         denied
           ? "Camera access was blocked. Enable it in your browser or device settings, then try again."
           : "Could not open the camera. Try choosing a photo from your library instead.",
       );
-      setPermissionNote("");
     } finally {
       setOpeningCamera(false);
     }
   }
 
-  function setCameraError(message: string) {
-    setError(message);
-  }
-
   function cancelCamera() {
     stopCameraStream();
     setShowCamera(false);
-    setPermissionNote("");
   }
 
   async function capturePhoto() {
@@ -159,24 +176,6 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
           Take a photo or upload an image to auto-fill items, tax, and tip.
         </p>
       </div>
-
-      <input
-        id={GALLERY_INPUT_ID}
-        type="file"
-        accept="image/*"
-        className="sr-only"
-        disabled={pickerDisabled}
-        onChange={handleGalleryChange}
-      />
-      <input
-        id={CAMERA_CAPTURE_INPUT_ID}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="sr-only"
-        disabled={pickerDisabled}
-        onChange={handleCameraCaptureChange}
-      />
 
       {showCamera && (
         <div className="space-y-3">
@@ -213,61 +212,46 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
               {supportsCameraApi ? (
                 <Button
                   type="button"
-                  className="flex-1"
+                  className="min-h-[44px] flex-1"
                   onClick={() => void openCamera()}
                   disabled={pickerDisabled}
                 >
                   {openingCamera ? "Requesting access..." : "Take photo"}
                 </Button>
               ) : (
-                <label
-                  htmlFor={CAMERA_CAPTURE_INPUT_ID}
-                  className={cn(
-                    buttonSecondaryClass,
-                    "flex-1 cursor-pointer",
-                    pickerDisabled && "pointer-events-none opacity-50",
-                  )}
-                  onClick={() => {
-                    setError("");
-                    setPermissionNote("Allow camera access when prompted to take a receipt photo.");
-                  }}
+                <FilePickerLabel
+                  capture="environment"
+                  disabled={pickerDisabled}
+                  className={buttonSecondaryClass}
+                  onSelect={(file) => void handleFile(file)}
                 >
                   Take photo
-                </label>
+                </FilePickerLabel>
               )}
-              <label
-                htmlFor={GALLERY_INPUT_ID}
-                className={cn(
-                  buttonSecondaryClass,
-                  "flex-1 cursor-pointer",
-                  pickerDisabled && "pointer-events-none opacity-50",
-                )}
-                onClick={() => {
-                  setError("");
-                  setPermissionNote("Allow photo library access when prompted to pick a receipt image.");
-                }}
+              <FilePickerLabel
+                disabled={pickerDisabled}
+                className={buttonSecondaryClass}
+                onSelect={(file) => void handleFile(file)}
               >
                 Choose photo
-              </label>
+              </FilePickerLabel>
             </>
           ) : (
-            <label
-              htmlFor={GALLERY_INPUT_ID}
-              className={cn(
-                buttonSecondaryClass,
-                "flex-1 cursor-pointer bg-primary text-white hover:bg-primary-hover border-transparent",
-                pickerDisabled && "pointer-events-none opacity-50",
-              )}
-              onClick={() => setError("")}
+            <FilePickerLabel
+              disabled={pickerDisabled}
+              className={buttonPrimaryClass}
+              onSelect={(file) => void handleFile(file)}
             >
               {loading ? "Reading receipt..." : preview ? "Scan another" : "Upload receipt image"}
-            </label>
+            </FilePickerLabel>
           )}
         </div>
       )}
 
-      {permissionNote && (
-        <p className="text-sm text-muted">{permissionNote}</p>
+      {mobile && !showCamera && (
+        <p className="text-xs text-muted">
+          Your browser may ask for camera or photo library access.
+        </p>
       )}
       {loading && (
         <p className="text-sm text-muted">Extracting line items — this usually takes a few seconds.</p>
