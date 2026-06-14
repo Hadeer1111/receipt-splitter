@@ -4,7 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { parseReceipt, ApiError } from "@/lib/api";
 import type { ParsedReceipt } from "@/lib/types";
 import { Button, Card } from "@/components/ui";
-import { formatDollarsInput } from "@/lib/utils";
+import { cn, formatDollarsInput } from "@/lib/utils";
+
+const GALLERY_INPUT_ID = "receipt-gallery-input";
+const CAMERA_CAPTURE_INPUT_ID = "receipt-camera-capture-input";
+
+const buttonSecondaryClass =
+  "inline-flex items-center justify-center rounded-xl px-4 py-3 text-sm font-semibold transition bg-card border border-border text-foreground hover:bg-accent";
 
 interface ReceiptScannerProps {
   onParsed: (result: ParsedReceipt) => void;
@@ -19,7 +25,6 @@ function isMobileDevice() {
 }
 
 export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
-  const galleryInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -69,17 +74,24 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
     }
   }
 
+  function handleGalleryChange(e: React.ChangeEvent<HTMLInputElement>) {
+    void handleFile(e.target.files?.[0] ?? null);
+    e.target.value = "";
+    setPermissionNote("");
+  }
+
+  function handleCameraCaptureChange(e: React.ChangeEvent<HTMLInputElement>) {
+    void handleFile(e.target.files?.[0] ?? null);
+    e.target.value = "";
+    setPermissionNote("");
+  }
+
+  const pickerDisabled = loading || openingCamera || showCamera;
+  const supportsCameraApi = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
+
   async function openCamera() {
     setError("");
     setPermissionNote("Allow camera access when your browser asks — we only use it to scan your receipt.");
-
-    if (!navigator.mediaDevices?.getUserMedia) {
-      galleryInputRef.current?.setAttribute("capture", "environment");
-      galleryInputRef.current?.click();
-      galleryInputRef.current?.removeAttribute("capture");
-      setPermissionNote("");
-      return;
-    }
 
     setOpeningCamera(true);
 
@@ -108,12 +120,6 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
 
   function setCameraError(message: string) {
     setError(message);
-  }
-
-  function openGallery() {
-    setError("");
-    setPermissionNote("Allow photo library access when prompted to pick a receipt image.");
-    galleryInputRef.current?.click();
   }
 
   function cancelCamera() {
@@ -155,15 +161,21 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
       </div>
 
       <input
-        ref={galleryInputRef}
+        id={GALLERY_INPUT_ID}
         type="file"
         accept="image/*"
-        className="hidden"
-        onChange={(e) => {
-          void handleFile(e.target.files?.[0] ?? null);
-          e.target.value = "";
-          setPermissionNote("");
-        }}
+        className="sr-only"
+        disabled={pickerDisabled}
+        onChange={handleGalleryChange}
+      />
+      <input
+        id={CAMERA_CAPTURE_INPUT_ID}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="sr-only"
+        disabled={pickerDisabled}
+        onChange={handleCameraCaptureChange}
       />
 
       {showCamera && (
@@ -198,33 +210,58 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
         <div className="flex gap-2">
           {mobile ? (
             <>
-              <Button
-                type="button"
-                className="flex-1"
-                onClick={() => void openCamera()}
-                disabled={loading || openingCamera}
-              >
-                {openingCamera ? "Requesting access..." : "Take photo"}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                className="flex-1"
-                onClick={openGallery}
-                disabled={loading || openingCamera}
+              {supportsCameraApi ? (
+                <Button
+                  type="button"
+                  className="flex-1"
+                  onClick={() => void openCamera()}
+                  disabled={pickerDisabled}
+                >
+                  {openingCamera ? "Requesting access..." : "Take photo"}
+                </Button>
+              ) : (
+                <label
+                  htmlFor={CAMERA_CAPTURE_INPUT_ID}
+                  className={cn(
+                    buttonSecondaryClass,
+                    "flex-1 cursor-pointer",
+                    pickerDisabled && "pointer-events-none opacity-50",
+                  )}
+                  onClick={() => {
+                    setError("");
+                    setPermissionNote("Allow camera access when prompted to take a receipt photo.");
+                  }}
+                >
+                  Take photo
+                </label>
+              )}
+              <label
+                htmlFor={GALLERY_INPUT_ID}
+                className={cn(
+                  buttonSecondaryClass,
+                  "flex-1 cursor-pointer",
+                  pickerDisabled && "pointer-events-none opacity-50",
+                )}
+                onClick={() => {
+                  setError("");
+                  setPermissionNote("Allow photo library access when prompted to pick a receipt image.");
+                }}
               >
                 Choose photo
-              </Button>
+              </label>
             </>
           ) : (
-            <Button
-              type="button"
-              className="flex-1"
-              onClick={openGallery}
-              disabled={loading}
+            <label
+              htmlFor={GALLERY_INPUT_ID}
+              className={cn(
+                buttonSecondaryClass,
+                "flex-1 cursor-pointer bg-primary text-white hover:bg-primary-hover border-transparent",
+                pickerDisabled && "pointer-events-none opacity-50",
+              )}
+              onClick={() => setError("")}
             >
               {loading ? "Reading receipt..." : preview ? "Scan another" : "Upload receipt image"}
-            </Button>
+            </label>
           )}
         </div>
       )}
