@@ -14,24 +14,57 @@ function isMobileDevice() {
   );
 }
 
-const galleryInputClassName = cn(
-  "block w-full cursor-pointer text-sm text-muted",
-  "file:mr-0 file:w-full file:cursor-pointer file:rounded-xl file:border-0",
-  "file:bg-primary file:px-4 file:py-3 file:text-sm file:font-semibold file:text-white",
-  "file:transition file:hover:bg-primary-hover",
-);
-
 interface ReceiptScannerProps {
   onParsed: (result: ParsedReceipt) => void;
+}
+
+function GalleryPicker({
+  disabled,
+  onSelect,
+  label,
+  hint,
+  capture,
+}: {
+  disabled?: boolean;
+  onSelect: (file: File) => void;
+  label: string;
+  hint?: string;
+  capture?: "environment" | "user";
+}) {
+  return (
+    <div
+      className={cn(
+        "relative min-h-[120px] rounded-xl border-2 border-dashed border-primary/50 bg-background",
+        disabled && "pointer-events-none opacity-50",
+      )}
+    >
+      <input
+        type="file"
+        accept="image/*"
+        capture={capture}
+        className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-[0.01]"
+        style={{ fontSize: 16, touchAction: "manipulation" }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) onSelect(file);
+        }}
+      />
+      <div className="pointer-events-none flex min-h-[120px] flex-col items-center justify-center px-4 py-6 text-center">
+        <p className="font-semibold text-primary">{label}</p>
+        {hint && <p className="mt-1 text-xs text-muted">{hint}</p>}
+      </div>
+    </div>
+  );
 }
 
 export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const cameraFallbackRef = useRef<HTMLInputElement>(null);
 
   const [mobile, setMobile] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
+  const [selectedName, setSelectedName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [showCamera, setShowCamera] = useState(false);
@@ -59,6 +92,7 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
   async function handleFile(file: File | null) {
     if (!file) return;
     setError("");
+    setSelectedName(file.name || "Selected photo");
 
     const objectUrl = URL.createObjectURL(file);
     setPreview(objectUrl);
@@ -72,12 +106,6 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
     } finally {
       setLoading(false);
     }
-  }
-
-  function handleGalleryChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0] ?? null;
-    e.target.value = "";
-    void handleFile(file);
   }
 
   const pickerDisabled = loading || openingCamera || showCamera;
@@ -106,11 +134,6 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
     } finally {
       setOpeningCamera(false);
     }
-  }
-
-  function openCameraFallback() {
-    setError("");
-    cameraFallbackRef.current?.click();
   }
 
   function cancelCamera() {
@@ -150,17 +173,6 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
         </p>
       </div>
 
-      <input
-        ref={cameraFallbackRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="sr-only"
-        tabIndex={-1}
-        aria-hidden
-        onChange={handleGalleryChange}
-      />
-
       {showCamera && (
         <div className="space-y-3">
           <div className="overflow-hidden rounded-xl border border-border bg-black">
@@ -189,63 +201,46 @@ export function ReceiptScanner({ onParsed }: ReceiptScannerProps) {
         </div>
       )}
 
+      {selectedName && !showCamera && (
+        <p className="text-sm text-muted">Selected: {selectedName}</p>
+      )}
+
       {!showCamera && (
         <div className="space-y-3">
-          {mobile && (
-            <div className="flex gap-2">
-              {supportsCameraApi ? (
-                <Button
-                  type="button"
-                  className="min-h-[44px] w-full"
-                  onClick={() => void openCamera()}
-                  disabled={pickerDisabled}
-                >
-                  {openingCamera ? "Requesting access..." : "Take photo"}
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  className="min-h-[44px] w-full"
-                  onClick={openCameraFallback}
-                  disabled={pickerDisabled}
-                >
-                  Take photo
-                </Button>
-              )}
-            </div>
+          {mobile && supportsCameraApi && (
+            <Button
+              type="button"
+              className="min-h-[44px] w-full"
+              onClick={() => void openCamera()}
+              disabled={pickerDisabled}
+            >
+              {openingCamera ? "Requesting access..." : "Take photo with camera"}
+            </Button>
           )}
 
-          <div
-            className={cn(
-              "rounded-xl border border-border bg-background p-3",
-              pickerDisabled && "pointer-events-none opacity-50",
-            )}
-          >
-            {mobile && (
-              <p className="mb-2 text-center text-sm font-semibold">Choose photo</p>
-            )}
-            <input
-              type="file"
-              accept="image/*"
+          <GalleryPicker
+            disabled={pickerDisabled}
+            label={mobile ? "Tap to choose photo" : "Tap to upload receipt image"}
+            hint={
+              mobile
+                ? "Opens your photo library — allow access if asked"
+                : "Select a JPEG, PNG, or HEIC image"
+            }
+            onSelect={(file) => void handleFile(file)}
+          />
+
+          {mobile && !supportsCameraApi && (
+            <GalleryPicker
               disabled={pickerDisabled}
-              className={galleryInputClassName}
-              style={{ fontSize: 16 }}
-              onChange={handleGalleryChange}
+              capture="environment"
+              label="Tap to take photo"
+              hint="Opens your camera — allow access if asked"
+              onSelect={(file) => void handleFile(file)}
             />
-            {!mobile && (
-              <p className="mt-2 text-center text-xs text-muted">
-                {loading ? "Reading receipt..." : preview ? "Pick another image to scan again" : "Select a receipt image from your device"}
-              </p>
-            )}
-          </div>
+          )}
         </div>
       )}
 
-      {mobile && !showCamera && (
-        <p className="text-xs text-muted">
-          Tap the button above to pick from your photo library. Your browser may ask for access.
-        </p>
-      )}
       {loading && (
         <p className="text-sm text-muted">Extracting line items — this usually takes a few seconds.</p>
       )}

@@ -34,9 +34,36 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Image file is required" }, { status: 400 });
   }
 
-  const allowed = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-  if (!allowed.includes(file.type)) {
-    return NextResponse.json({ message: "Unsupported image type. Use JPEG, PNG, or WebP." }, { status: 400 });
+  const allowed = new Set([
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "image/heic",
+    "image/heif",
+  ]);
+
+  const ext = file.name.split(".").pop()?.toLowerCase();
+  const extToMime: Record<string, string> = {
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    png: "image/png",
+    webp: "image/webp",
+    gif: "image/gif",
+    heic: "image/heic",
+    heif: "image/heif",
+  };
+
+  let mimeType = file.type;
+  if (!mimeType || mimeType === "application/octet-stream") {
+    mimeType = ext ? (extToMime[ext] ?? "image/jpeg") : "image/jpeg";
+  }
+
+  if (!allowed.has(mimeType)) {
+    return NextResponse.json(
+      { message: "Unsupported image type. Use JPEG, PNG, HEIC, or WebP." },
+      { status: 400 },
+    );
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
@@ -52,7 +79,7 @@ export async function POST(request: NextRequest) {
 
     const result = await model.generateContent([
       RECEIPT_PROMPT,
-      { inlineData: { data: base64, mimeType: file.type } },
+      { inlineData: { data: base64, mimeType } },
     ]);
 
     const raw = result.response.text();
